@@ -29,10 +29,26 @@ HOW TO USE
 
 TIPS FOR GOOD DATA
 ------------------
-- Collect at least 200 samples per class (aim for 500+).
+- Collect at least 300 samples per class (aim for 500+).
 - Vary your speed, hand position on screen, and lighting.
 - Keep "No Swipe" samples (class 0) at roughly the same count as the
   other classes combined.
+- Perform clean, full swipes — do not start recording in the middle of
+  a gesture; let the history window fill with the complete motion.
+
+VELOCITY FEATURES
+-----------------
+When USE_VELOCITY_FEATURES = True (the default) each sample contains:
+  - 16 relative positions  (dx0,dy0 … dx15,dy15)  — 32 floats
+  - 15 frame-to-frame velocities (vx0,vy0 … vx14,vy14) — 30 floats
+  Total: 62 floats per sample.
+
+This gives the model explicit information about HOW FAST and in WHAT
+DIRECTION the finger is moving, which is the key signal that separates
+swipe gestures from a still "No Swipe" hand.
+
+Set USE_VELOCITY_FEATURES = False to revert to the original 32-float
+format (useful if you have an existing CSV you want to keep using).
 
 The data is appended to `training_data.csv` in the same folder.
 Run train_model.py when you are satisfied with the data.
@@ -53,6 +69,13 @@ DATA_FILE = "training_data.csv"
 IMAGE_WIDTH = 960
 IMAGE_HEIGHT = 540
 
+# When True, each sample includes HISTORY_LENGTH-1 frame-to-frame velocity
+# vectors appended after the relative-position features.  This gives the
+# model an explicit signal about motion speed and direction, which strongly
+# improves accuracy on swipe gestures.
+# Must match the USE_VELOCITY_FEATURES setting in train_model.py.
+USE_VELOCITY_FEATURES = True
+
 GESTURE_CLASSES = {
     0: "No Swipe",
     1: "Swipe Left",
@@ -66,7 +89,7 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
 
-def pre_process_point_history(history: list) -> list:
+def pre_process_point_history(history: list, use_velocity: bool = USE_VELOCITY_FEATURES) -> list:
     """
     Convert a list of (x, y) positions into a normalised 1-D feature vector.
 
@@ -75,6 +98,16 @@ def pre_process_point_history(history: list) -> list:
     1. Make coordinates relative to the first point in the history window.
     2. Flatten to a single list  [dx0, dy0, dx1, dy1, …].
     3. Normalise by the maximum absolute value so all values are in [-1, 1].
+    4. (Optional, recommended) Append frame-to-frame velocity vectors
+       [vx0, vy0, vx1, vy1, …] normalised independently.  This provides
+       an explicit motion-direction signal that significantly helps the
+       model distinguish swipe directions from a stationary hand.
+
+    Returns
+    -------
+    list of floats:
+      - 32 values when use_velocity=False  (HISTORY_LENGTH * 2)
+      - 62 values when use_velocity=True   (HISTORY_LENGTH * 2 + (HISTORY_LENGTH-1) * 2)
     """
     temp = copy.deepcopy(history)
     if not temp:
@@ -89,7 +122,26 @@ def pre_process_point_history(history: list) -> list:
     max_val = max((abs(v) for v in flattened), default=1.0)
     if max_val > 0:
         flattened = [v / max_val for v in flattened]
-    return flattened
+
+    if not use_velocity:
+        return flattened
+
+    # --- Velocity features ---------------------------------------------------
+    # Compute frame-to-frame differences from the original (un-normalised)
+    # relative coordinates before dividing by max_val, then normalise
+    # the velocity vector independently.
+    velocities: list[float] = []
+    for i in range(1, len(temp)):
+        vx = (temp[i][0] - base_x) - (temp[i - 1][0] - base_x)
+        vy = (temp[i][1] - base_y) - (temp[i - 1][1] - base_y)
+        velocities.append(vx)
+        velocities.append(vy)
+
+    vel_max = max((abs(v) for v in velocities), default=1.0)
+    if vel_max > 0:
+        velocities = [v / vel_max for v in velocities]
+
+    return flattened + velocities
 
 
 def save_to_csv(label: int, data: list) -> None:
@@ -127,6 +179,8 @@ def main() -> None:
 
     print("=== Swipe Gesture Data Collector ===")
     print(f"Data will be saved to: {DATA_FILE}")
+    num_features = HISTORY_LENGTH * 2 + (HISTORY_LENGTH - 1) * 2 if USE_VELOCITY_FEATURES else HISTORY_LENGTH * 2
+    print(f"Feature mode: {'positions + velocities' if USE_VELOCITY_FEATURES else 'positions only'} ({num_features} floats)")
     existing = count_existing_samples()
     print("Existing samples per class:")
     for k, v in existing.items():
@@ -173,7 +227,8 @@ def main() -> None:
                         and frame_count % 2 == 0
                     ):
                         data = pre_process_point_history(list(point_history))
-                        if len(data) == HISTORY_LENGTH * 2:
+                        expected = num_features
+                        if len(data) == expected:
                             save_to_csv(recording_class, data)
 
                     # Draw tracking dot

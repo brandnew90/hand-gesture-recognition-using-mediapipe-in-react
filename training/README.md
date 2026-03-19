@@ -96,11 +96,18 @@ A window will open showing your webcam feed.
 
 ### Tips for good data
 
+- **Perform complete swipes**: Start recording **before** the gesture begins so
+  the 16-frame history captures the whole motion.  Starting in the middle of a
+  swipe produces ambiguous samples that confuse the model.
 - **Vary speed**: some swipes slow, some fast.
 - **Vary position**: move your hand at different heights and distances.
 - **Vary lighting**: record in different rooms or at different times of day.
-- **"No Swipe" matters**: record it with your hand in many positions so the
-  model learns the difference between "nothing happening" and a real swipe.
+- **"No Swipe" matters**: record it with your hand in many positions and with
+  small incidental movements so the model learns the difference between "nothing
+  happening" and a real swipe.
+- **Balance classes**: having roughly equal sample counts per class (especially
+  matching "No Swipe" to the total of all swipe classes) prevents the model from
+  being biased towards the majority class.
 
 When you quit, the data is saved to `training_data.csv`.  
 You can run `collect_data.py` multiple times — new rows are **appended** to
@@ -142,10 +149,15 @@ When training finishes you will find:
 | 85–95 %  | Good |
 | > 95 %   | Excellent |
 
-If accuracy is low, the most common fixes are:
-1. Collect more samples.
-2. Make sure samples are balanced (similar counts per class).
-3. Improve recording quality (better lighting, steadier camera).
+### Why accuracy might be low (and how to fix it)
+
+| Symptom | Most likely cause | Fix |
+|---------|-------------------|-----|
+| All classes confused | Too few samples | Collect 300+ per class |
+| Swipes confused with No Swipe | Short / incomplete swipes recorded | Record full swipes; use `USE_VELOCITY_FEATURES=True` |
+| Left confused with Right | Samples recorded at wrong part of gesture | Start recording at the beginning of the swipe |
+| Accuracy plateaus below 80 % | Class imbalance | Balance sample counts; check with `df[0].value_counts()` |
+| Model over-fits (val > train) | Too many epochs / too little data | Increase dataset size; augmentation handles this automatically |
 
 ---
 
@@ -184,11 +196,17 @@ model.current = await tf.loadGraphModel(
 );
 ```
 
-The input to this model is a **flat array of 32 floats** — the same format
-produced by the `preProcessPointHistory()` function in `collect_data.py`:
-- 16 frames × 2 coordinates = 32 values
-- Relative to the first frame position
-- Normalised to [-1, 1]
+The input to this model is a **flat array of floats** in the same format
+produced by the `pre_process_point_history()` function in `collect_data.py`:
+
+| Setting | Input size | Description |
+|---------|-----------|-------------|
+| `USE_VELOCITY_FEATURES=True` | **62 floats** | 16 positions (32) + 15 velocities (30) |
+| `USE_VELOCITY_FEATURES=False` | **32 floats** | 16 positions only |
+
+- All values normalised to [-1, 1]
+- Positions relative to the first frame
+- Velocities (frame-to-frame differences) normalised independently
 
 ### 4b. Update constants.ts
 
@@ -213,7 +231,8 @@ Open http://localhost:3000 and try swiping your hand.
 ### What data is recorded
 
 The script tracks your **index finger tip** (MediaPipe landmark #8) position
-over 16 consecutive frames.  That gives us 16 × 2 = **32 numbers** per sample.
+over 16 consecutive frames.  That gives us 16 × 2 = **32 numbers** of
+position features.
 
 ```
 Frame  1: (0.52, 0.43)
@@ -222,30 +241,53 @@ Frame  2: (0.50, 0.43)
 Frame 16: (0.28, 0.44)   ← finger moved left → Swipe Left
 ```
 
+With `USE_VELOCITY_FEATURES=True`, the script also computes 15 frame-to-frame
+velocity vectors (how much the finger moved between consecutive frames):
+
+```
+Velocity 1: (frame2 - frame1) = (-0.02, 0.00)
+Velocity 2: (frame3 - frame2) = (-0.03, 0.01)
+…
+Velocity 15: (frame16 - frame15) = (-0.04, 0.00)  ← moving left fast
+```
+
+This gives the model an explicit signal about **speed and direction** that
+strongly separates "Swipe Left" (consistently negative vx) from
+"No Swipe" (velocities near zero).
+
 ### Model architecture
 
 ```
-Input (32)
+Input (62 with velocity / 32 without)
   ↓
-Dense 24 neurons + ReLU
+Dense 64 neurons + BatchNorm + ReLU
   ↓
 Dropout 30 %
   ↓
-Dense 10 neurons + ReLU
+Dense 32 neurons + BatchNorm + ReLU
+  ↓
+Dropout 20 %
   ↓
 Dense 5 neurons + Softmax
   ↓
 Output (5 probabilities)
 ```
 
-The model is intentionally small so it runs in real-time in the browser.
+**BatchNormalization** normalises layer activations during training, which:
+- Stabilises learning (prevents vanishing/exploding gradients)
+- Acts as a regulariser (reduces over-fitting)
+- Allows larger learning rates for faster convergence
 
 ### Training process
 
 1. **Split**: 80 % of your data is used for training, 20 % for testing.
-2. **Early stopping**: training stops automatically when the validation loss
-   stops improving (prevents over-fitting).
-3. **Best model saved**: only the checkpoint with the highest validation
+2. **Augmentation**: each training sample is duplicated 3× with small Gaussian
+   noise (σ = 0.02), simulating natural variation in gesture speed and position.
+3. **Early stopping**: training stops automatically when the validation loss
+   stops improving for 20 consecutive epochs (prevents over-fitting).
+4. **Learning-rate reduction**: the learning rate is halved whenever the
+   validation loss plateaus for 10 epochs, allowing finer weight adjustment.
+5. **Best model saved**: only the checkpoint with the highest validation
    accuracy is kept.
 
 ---
@@ -276,6 +318,11 @@ The model is intentionally small so it runs in real-time in the browser.
 **Accuracy stays low after many epochs**  
 → Check that your CSV has a balanced number of samples per class.
   Run `python -c "import pandas as pd; df=pd.read_csv('training_data.csv', header=None); print(df[0].value_counts())"`.
+
+**Feature count mismatch error**  
+→ Make sure `USE_VELOCITY_FEATURES` is set to the **same value** in both
+  `collect_data.py` and `train_model.py`.  If you have an existing CSV
+  collected without velocity features, set both to `False`.
 
 **"tensorflowjs_converter not found"**  
 → Run `pip install tensorflowjs`.
