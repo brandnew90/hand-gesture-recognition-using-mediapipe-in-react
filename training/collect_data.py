@@ -43,6 +43,11 @@ import csv
 import os
 from collections import deque
 
+# Suppress TensorFlow/CUDA log noise on CPU-only machines before importing
+# mediapipe (which transitively imports TensorFlow).
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")   # suppress C++ log spam
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")  # disable GPU look-up
+
 import cv2 as cv
 import mediapipe as mp
 import numpy as np
