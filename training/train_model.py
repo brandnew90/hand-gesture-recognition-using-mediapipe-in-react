@@ -25,7 +25,7 @@ GUIDELINES
 
 import os
 
-# Suppress TensorFlow/CUDA log noise on CPU-only machines.  These must be set
+# Suppress TensorFlow/CUDA log noise on CPU-only machines. These must be set
 # before tensorflow is imported (directly or transitively).
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")   # suppress C++ log spam
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")  # disable GPU look-up

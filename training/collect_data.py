@@ -67,10 +67,6 @@ GESTURE_CLASSES = {
 }
 # ─────────────────────────────────────────────────────────────────────────────
 
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-
-
 def pre_process_point_history(history: list) -> list:
     """
     Convert a list of (x, y) positions into a normalised 1-D feature vector.
@@ -122,6 +118,20 @@ def count_existing_samples() -> dict:
 
 
 def main() -> None:
+    # Resolve the mediapipe Solutions API bindings here (not at module level) so
+    # that any import failure is caught in one place and reported with a helpful
+    # message rather than crashing silently during module initialisation.
+    try:
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+    except AttributeError as exc:
+        raise SystemExit(
+            "Could not load the mediapipe Hands solution.\n"
+            "Make sure a compatible version is installed:\n"
+            "    pip install 'mediapipe>=0.10.0'\n"
+            f"Details: {exc}"
+        ) from exc
+
     cap = cv.VideoCapture(0)
     cap.set(cv.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT)
