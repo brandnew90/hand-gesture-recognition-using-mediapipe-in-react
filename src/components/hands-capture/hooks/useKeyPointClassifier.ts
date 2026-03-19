@@ -1,9 +1,20 @@
 import { useEffect, useRef } from 'react';
-import { Landmark, Results } from '@mediapipe/hands';
 
 import * as tf from '@tensorflow/tfjs';
 
-import _ from 'lodash';
+import { cloneDeep, flatten } from 'lodash';
+
+// MediaPipe types (loaded from CDN, defined for TypeScript)
+interface Landmark {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface Results {
+  multiHandLandmarks?: Landmark[][];
+  image: HTMLVideoElement | HTMLImageElement;
+}
 
 const calcLandmarkList = (image, landmarks) => {
   const { width: imageWidth, height: imageHeight } = image;
@@ -22,7 +33,7 @@ const calcLandmarkList = (image, landmarks) => {
 };
 
 const preProcessLandmark = (landmarkList) => {
-  let tempLandmarkList = _.cloneDeep(landmarkList);
+  let tempLandmarkList = cloneDeep(landmarkList);
 
   let baseX = 0;
   let baseY = 0;
@@ -39,7 +50,7 @@ const preProcessLandmark = (landmarkList) => {
   });
 
   //convert to one-dimensional list
-  tempLandmarkList = _.flatten(tempLandmarkList);
+  tempLandmarkList = flatten(tempLandmarkList);
 
   //normalize
   const maxValue = Math.max(

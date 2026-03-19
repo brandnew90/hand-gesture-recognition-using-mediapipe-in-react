@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /.pnp
+/training/venv
 .pnp.js
 
 # testing

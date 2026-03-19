@@ -1,12 +1,22 @@
-import { useRef } from "react";
+import { useRef, useEffect, useState } from "react";
 import useGestureRecognition from "./components/hands-capture/hooks";
 
 function App() {
-  const videoElement = useRef<any>()
-  const canvasEl = useRef<any>()
+  const videoElement = useRef<HTMLVideoElement>(null)
+  const canvasEl = useRef<HTMLCanvasElement>(null)
+  const [isReady, setIsReady] = useState(false);
+  
+  useEffect(() => {
+    // Ensure refs are set before initializing MediaPipe
+    if (videoElement.current && canvasEl.current) {
+      setIsReady(true);
+    }
+  }, []);
+  
   const { maxVideoWidth, maxVideoHeight } = useGestureRecognition({
     videoElement,
-    canvasEl
+    canvasEl,
+    isReady
   });
 
   return (
@@ -19,8 +29,10 @@ function App() {
       }}
     >
       <video
-        style={{ display: 'none' }}
+        style={{ width: maxVideoWidth, height: maxVideoHeight }}
         className='video'
+        width={maxVideoWidth}
+        height={maxVideoHeight}
         playsInline
         ref={videoElement}
       />

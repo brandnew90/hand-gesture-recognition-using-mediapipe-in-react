@@ -1,11 +1,4 @@
 import { Ref, useEffect, useRef } from 'react';
-import { Camera } from '@mediapipe/camera_utils';
-import {
-  drawConnectors,
-  drawLandmarks,
-  drawRectangle,
-} from '@mediapipe/drawing_utils';
-import { Hands, HAND_CONNECTIONS } from '@mediapipe/hands';
 import useKeyPointClassifier from '../hooks/useKeyPointClassifier';
 import useSwipeDetector, { SwipeDirection } from '../hooks/useSwipeDetector';
 import CONFIGS from '../../../../constants';
@@ -23,15 +16,17 @@ const SWIPE_ARROW: Record<SwipeDirection, string> = {
 };
 
 interface IHandGestureLogic {
-  videoElement: Ref<any>
-  canvasEl: Ref<any>
+  videoElement: Ref<HTMLVideoElement>
+  canvasEl: Ref<HTMLCanvasElement>
+  isReady: boolean
 }
 
-function useGestureRecognition({videoElement, canvasEl}: IHandGestureLogic) {
+function useGestureRecognition({videoElement, canvasEl, isReady}: IHandGestureLogic) {
   const hands = useRef<any>(null);
   const camera = useRef<any>(null);
   const handsGesture = useRef<any>([]);
   const swipeDirections = useRef<SwipeDirection[]>([]);
+  const mediapipeModules = useRef<any>({});
 
   const { processLandmark } = useKeyPointClassifier();
   const { detectSwipe, resetHistory } = useSwipeDetector();
@@ -67,33 +62,35 @@ function useGestureRecognition({videoElement, canvasEl}: IHandGestureLogic) {
             maxVideoHeight * Math.min(...landmarksY) - 15
           );
 
-          drawRectangle(
-            ctx,
-            {
-              xCenter:
-                Math.min(...landmarksX) +
-                (Math.max(...landmarksX) - Math.min(...landmarksX)) / 2,
-              yCenter:
-                Math.min(...landmarksY) +
-                (Math.max(...landmarksY) - Math.min(...landmarksY)) / 2,
-              width: Math.max(...landmarksX) - Math.min(...landmarksX),
-              height: Math.max(...landmarksY) - Math.min(...landmarksY),
-              rotation: 0,
-            },
-            {
-              fillColor: 'transparent',
-              color: '#ff0000',
+          if (mediapipeModules.current.drawingUtils) {
+            mediapipeModules.current.drawingUtils.drawRectangle(
+              ctx,
+              {
+                xCenter:
+                  Math.min(...landmarksX) +
+                  (Math.max(...landmarksX) - Math.min(...landmarksX)) / 2,
+                yCenter:
+                  Math.min(...landmarksY) +
+                  (Math.max(...landmarksY) - Math.min(...landmarksY)) / 2,
+                width: Math.max(...landmarksX) - Math.min(...landmarksX),
+                height: Math.max(...landmarksY) - Math.min(...landmarksY),
+                rotation: 0,
+              },
+              {
+                fillColor: 'transparent',
+                color: '#ff0000',
+                lineWidth: 1,
+              }
+            );
+            mediapipeModules.current.drawingUtils.drawConnectors(ctx, landmarks, mediapipeModules.current.HAND_CONNECTIONS, {
+              color: '#00ffff',
+              lineWidth: 2,
+            });
+            mediapipeModules.current.drawingUtils.drawLandmarks(ctx, landmarks, {
+              color: '#ffff29',
               lineWidth: 1,
-            }
-          );
-          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-            color: '#00ffff',
-            lineWidth: 2,
-          });
-          drawLandmarks(ctx, landmarks, {
-            color: '#ffff29',
-            lineWidth: 1,
-          });
+            });
+          }
         }
 
         // Draw swipe direction overlay in the top-left corner
@@ -116,8 +113,10 @@ function useGestureRecognition({videoElement, canvasEl}: IHandGestureLogic) {
     }
   }
 
-  const loadHands = () => {
-    hands.current = new Hands({
+  const loadHands = (HandsClass: any, HAND_CONNECTIONS: any) => {
+    mediapipeModules.current.HAND_CONNECTIONS = HAND_CONNECTIONS;
+    
+    hands.current = new HandsClass({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
     });
@@ -131,19 +130,81 @@ function useGestureRecognition({videoElement, canvasEl}: IHandGestureLogic) {
   };
 
   useEffect(() => {
-    (async function initCamara() {
-      camera.current = new Camera(videoElement.current, {
-        onFrame: async () => {
-          await hands.current.send({ image: videoElement.current });
-        },
-        width: maxVideoWidth,
-        height: maxVideoHeight,
-      });
-      camera.current.start();
-    })();
+    if (!isReady || !videoElement.current || !canvasEl.current) {
+      return;
+    }
 
-    loadHands();
-  }, []);
+    const initMediaPipe = async () => {
+      try {
+        console.log('Starting MediaPipe initialization...');
+        console.log('Video element:', videoElement.current);
+        console.log('Canvas element:', canvasEl.current);
+        
+        // Check if camera devices are available
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log('Available video devices:', videoDevices);
+        
+        if (videoDevices.length === 0) {
+          throw new Error('No camera devices found');
+        }
+        
+        // Test direct camera access first
+        console.log('Testing direct camera access...');
+        const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        console.log('Direct camera access successful, stream:', testStream);
+        testStream.getTracks().forEach(track => track.stop());
+        console.log('Test stream stopped');
+        
+        // Small delay to ensure DOM is fully ready
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Wait for MediaPipe libraries to load from CDN
+        while (!(window as any).Hands || !(window as any).Camera) {
+          console.log('Waiting for MediaPipe to load...');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        console.log('MediaPipe loaded');
+
+        const Camera = (window as any).Camera;
+        const Hands = (window as any).Hands;
+        const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
+        
+        mediapipeModules.current.drawingUtils = (window as any).drawingUtils || (window as any);
+
+        loadHands(Hands, HAND_CONNECTIONS);
+        console.log('Hands model loaded');
+
+        if (!videoElement.current) {
+          throw new Error('Video element is null');
+        }
+
+        console.log('Creating Camera instance with video element:', videoElement.current);
+        console.log('Video element parent:', videoElement.current.parentElement);
+        console.log('Video element in document:', document.body.contains(videoElement.current));
+        
+        camera.current = new Camera(videoElement.current, {
+          onFrame: async () => {
+            if (hands.current && videoElement.current) {
+              await hands.current.send({ image: videoElement.current });
+            }
+          },
+          width: maxVideoWidth,
+          height: maxVideoHeight,
+        });
+        
+        console.log('Starting camera...');
+        camera.current.start();
+        console.log('Camera started successfully');
+      } catch (error) {
+        console.error('Failed to acquire camera feed:', error);
+        console.error('Error details:', error.message, error.stack);
+      }
+    };
+
+    initMediaPipe();
+  }, [isReady]);
 
   return { maxVideoHeight, maxVideoWidth, canvasEl, videoElement };
 }
