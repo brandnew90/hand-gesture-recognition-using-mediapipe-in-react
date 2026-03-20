@@ -43,7 +43,7 @@ from tensorflow.keras.models import Sequential
 
 # ── Configuration ────────────────────────────────────────────────────────────
 DATA_FILE = "training_data.csv"
-MODEL_SAVE_PATH = "swipe_gesture_model.hdf5"
+MODEL_SAVE_PATH = "swipe_gesture_model.keras"
 HISTORY_PLOT_PATH = "training_history.png"
 
 HISTORY_LENGTH = 16           # Must match collect_data.py and useSwipeDetector.ts
